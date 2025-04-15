@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+python-dotenv
+pyVmomi
+requests
+urllib3
+paramiko

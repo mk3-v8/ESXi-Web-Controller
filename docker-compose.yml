@@ -1,0 +1,24 @@
+services:
+  esxi-web-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile-backend
+    container_name: esxi-web-manager
+    environment:
+      - ESXI_HOST=your.esxi.host.ip
+      - ESXI_USER=root
+      - ESXI_PASSWORD=your_password
+    volumes:
+      - ./keys:/root/.ssh
+    ports:
+      - "8000:8000"  
+    restart: always
+  
+  esxi-web-frontend:
+    image: nginx:alpine  
+    container_name: esxi-web-frontend
+    ports:
+      - "5656:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro  
+    restart: always

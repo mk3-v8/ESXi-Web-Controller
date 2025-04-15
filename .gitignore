@@ -1,0 +1,4 @@
+__pycache__
+.env
+id_rsa
+id_rsa.pub
