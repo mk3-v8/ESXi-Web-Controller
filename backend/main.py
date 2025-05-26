@@ -222,20 +222,39 @@ def run_clone_process(source_vm_name, new_vm_name):
     si = connect_to_esxi()
     try:
         content = si.RetrieveContent()
+
         vm = next((vm for vm in content.viewManager.CreateContainerView(
             content.rootFolder, [vim.VirtualMachine], True).view if vm.name == source_vm_name), None)
+
         if not vm:
-            print(f"ERROR: Source VM '{source_vm_name}' not found.")
+            print(f"[ERROR] Source VM '{source_vm_name}' not found.")
             return
 
         source_vm_path = vm.config.files.vmPathName
         source_datastore_name, source_vm_folder = source_vm_path.strip("[]").split("] ")
         source_vm_folder = source_vm_folder.split("/")[0]
 
+        disk_path = None
+        for dev in vm.config.hardware.device:
+            if isinstance(dev, vim.vm.device.VirtualDisk):
+                if hasattr(dev.backing, 'fileName'):
+                    filename = dev.backing.fileName
+                    if not "-delta.vmdk" in filename:
+                        disk_path = filename
+                        break
+
+        if not disk_path:
+            print("[ERROR] Could not find valid .vmdk disk file for the VM.")
+            return
+
+        print(f"[DEBUG] disk_path = {disk_path}")
+        disk_vmdk = disk_path.strip("[]").split("] ")[1]
+
         datastores = content.viewManager.CreateContainerView(
             content.rootFolder, [vim.Datastore], True).view
+
         if not datastores:
-            print("ERROR: No datastores found.")
+            print("[ERROR] No datastores found.")
             return
 
         best_datastore = max(datastores, key=lambda ds: ds.summary.freeSpace)
@@ -246,54 +265,59 @@ def run_clone_process(source_vm_name, new_vm_name):
         ssh.connect(ESXI_HOST, username=ESXI_USER, password=ESXI_PASSWORD)
 
         steps = [
-            ("Creating VM directory", f"mkdir /vmfs/volumes/{destination_datastore_name}/{new_vm_name}"),
+            ("Creating VM directory", f"mkdir '/vmfs/volumes/{destination_datastore_name}/{new_vm_name}'"),
             (
                 "Cloning disk",
-                f"vmkfstools -i /vmfs/volumes/{source_datastore_name}/{source_vm_folder}/{source_vm_name}.vmdk "
-                f"-d thin /vmfs/volumes/{destination_datastore_name}/{new_vm_name}/{new_vm_name}.vmdk"
+                f"vmkfstools -i '/vmfs/volumes/{source_datastore_name}/{disk_vmdk}' \
+                '/vmfs/volumes/{destination_datastore_name}/{new_vm_name}/{new_vm_name}.vmdk' -d thin"
             ),
             (
                 "Copying VMX file",
-                f"cp /vmfs/volumes/{source_datastore_name}/{source_vm_folder}/{source_vm_name}.vmx "
-                f"/vmfs/volumes/{destination_datastore_name}/{new_vm_name}/{new_vm_name}.vmx"
+                f"cp '/vmfs/volumes/{source_datastore_name}/{source_vm_folder}/{source_vm_name}.vmx' \
+                '/vmfs/volumes/{destination_datastore_name}/{new_vm_name}/{new_vm_name}.vmx'"
             ),
             (
                 "Updating display name",
-                f"sed -i 's/displayName = \"{source_vm_name}\"/displayName = \"{new_vm_name}\"/g' "
-                f"/vmfs/volumes/{destination_datastore_name}/{new_vm_name}/{new_vm_name}.vmx"
+                f"sed -i 's/displayName = \"{source_vm_name}\"/displayName = \"{new_vm_name}\"/g' \
+                '/vmfs/volumes/{destination_datastore_name}/{new_vm_name}/{new_vm_name}.vmx'"
             ),
             (
                 "Updating VM disk reference",
-                f"sed -i 's/{source_vm_name}.vmdk/{new_vm_name}.vmdk/g' "
-                f"/vmfs/volumes/{destination_datastore_name}/{new_vm_name}/{new_vm_name}.vmx"
+                f"sed -i 's/{source_vm_name}.vmdk/{new_vm_name}.vmdk/g' \
+                '/vmfs/volumes/{destination_datastore_name}/{new_vm_name}/{new_vm_name}.vmx'"
             ),
             (
                 "Ensuring unique UUID",
-                f"sed -i '/uuid.bios/d' /vmfs/volumes/{destination_datastore_name}/{new_vm_name}/{new_vm_name}.vmx && "
-                f"echo 'uuid.action = \"create\"' >> /vmfs/volumes/{destination_datastore_name}/{new_vm_name}/{new_vm_name}.vmx"
+                f"sed -i '/uuid.bios/d' \
+                '/vmfs/volumes/{destination_datastore_name}/{new_vm_name}/{new_vm_name}.vmx' && \
+                echo 'uuid.action = \"create\"' >> \
+                '/vmfs/volumes/{destination_datastore_name}/{new_vm_name}/{new_vm_name}.vmx'"
             ),
             (
                 "Registering VM",
-                f"vim-cmd solo/registervm /vmfs/volumes/{destination_datastore_name}/{new_vm_name}/{new_vm_name}.vmx"
+                f"vim-cmd solo/registervm \
+                '/vmfs/volumes/{destination_datastore_name}/{new_vm_name}/{new_vm_name}.vmx'"
             )
         ]
 
         for description, command_line in steps:
+            print(f"[INFO] {description}:")
+            print(f"> {command_line}")
             stdin, stdout, stderr = ssh.exec_command(command_line)
             exit_status = stdout.channel.recv_exit_status()
             if exit_status != 0:
                 error = stderr.read().decode().strip()
                 ssh.close()
-                print(f"ERROR during '{description}': {error}")
+                print(f"[ERROR] during '{description}': {error}")
                 return
 
         ssh.close()
-        print(f"Clone '{new_vm_name}' created successfully from '{source_vm_name}'")
+        print(f"[SUCCESS] Clone '{new_vm_name}' created successfully from '{source_vm_name}'")
+
     except Exception as e:
-        print(f"ERROR: Failed to clone VM: {str(e)}")
+        print(f"[EXCEPTION] Failed to clone VM: {str(e)}")
     finally:
         Disconnect(si)
-
 
 @app.get("/delete")
 async def delete_vm( vm_name: str = Query(...)):
