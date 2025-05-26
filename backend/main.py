@@ -250,7 +250,7 @@ def run_clone_process(source_vm_name, new_vm_name):
             (
                 "Cloning disk",
                 f"vmkfstools -i /vmfs/volumes/{source_datastore_name}/{source_vm_folder}/{source_vm_name}.vmdk "
-                f"/vmfs/volumes/{destination_datastore_name}/{new_vm_name}/{new_vm_name}.vmdk -d thin"
+                f"-d thin /vmfs/volumes/{destination_datastore_name}/{new_vm_name}/{new_vm_name}.vmdk"
             ),
             (
                 "Copying VMX file",
